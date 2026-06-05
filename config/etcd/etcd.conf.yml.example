@@ -1,0 +1,57 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# ETCD Configuration Template
+#
+# Copy this file to /etc/etcd/etcd.conf.yml on each ETCD node and substitute:
+#   - name:                        etcd-1 / etcd-2 / etcd-3
+#   - listen-client-urls:          the node's IP
+#   - advertise-client-urls:       the node's IP
+#   - listen-peer-urls:            the node's IP
+#   - initial-advertise-peer-urls: the node's IP
+#
+# The initial-cluster line is identical on all three nodes.
+#
+# File permissions:
+#   sudo chown etcd:etcd /etc/etcd/etcd.conf.yml
+#   sudo chmod 640 /etc/etcd/etcd.conf.yml
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Node identity — change to etcd-2 or etcd-3 on the other nodes
+name: etcd-1
+
+data-dir: /var/lib/etcd
+
+# ── Network — replace PLACEHOLDER_ETCD_NODE_1_IP with the node's actual private IP ────────
+listen-client-urls: http://PLACEHOLDER_ETCD_NODE_1_IP:2379,http://127.0.0.1:2379
+advertise-client-urls: http://PLACEHOLDER_ETCD_NODE_1_IP:2379
+listen-peer-urls: http://PLACEHOLDER_ETCD_NODE_1_IP:2380
+initial-advertise-peer-urls: http://PLACEHOLDER_ETCD_NODE_1_IP:2380
+
+
+# ── Cluster bootstrap — same on all 3 nodes ──────────────────────────────────
+initial-cluster: >-
+  etcd-1=http://PLACEHOLDER_ETCD_NODE_1_IP:2380,
+  etcd-2=http://PLACEHOLDER_ETCD_NODE_2_IP:2380,
+  etcd-3=http://PLACEHOLDER_ETCD_NODE_3_IP:2380
+
+# Use a unique token per cluster — prevents accidental cross-cluster joins
+initial-cluster-token: PLACEHOLDER_CLUSTER_NAME-etcd-cluster
+
+# Use 'new' on first boot only. Change to 'existing' if adding a node to a
+# running cluster.
+initial-cluster-state: new
+
+# ── Tuning — safe defaults for t3.small (2 GB RAM) ───────────────────────────
+# heartbeat-interval and election-timeout must satisfy: election >= 10x heartbeat
+heartbeat-interval: 100       # milliseconds
+election-timeout: 1000        # milliseconds
+
+snapshot-count: 10000
+max-snapshots: 5
+max-wals: 5
+
+# Hard cap on ETCD keyspace — prevents runaway growth consuming all disk
+quota-backend-bytes: 1073741824    # 1 GB
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+log-level: info
+logger: zap

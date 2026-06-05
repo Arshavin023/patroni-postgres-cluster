@@ -1,0 +1,108 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# PgBackRest Configuration Template
+#
+# Deploy to /etc/pgbackrest/pgbackrest.conf on ALL 3 PostgreSQL nodes.
+# This config is identical on all three nodes.
+#
+# Replace every PLACEHOLDER_ value before deploying.
+#
+# File permissions:
+#   sudo chown postgres:postgres /etc/pgbackrest/pgbackrest.conf
+#   sudo chmod 640 /etc/pgbackrest/pgbackrest.conf
+#
+# If you are not using MinIO, remove the entire [global] repo2-* block.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[global]
+
+# ── Repo 1: AWS S3 (Primary warm backup) ─────────────────────────────────────
+repo1-type=s3
+repo1-s3-bucket=PLACEHOLDER_S3_BUCKET
+repo1-s3-endpoint=s3.PLACEHOLDER_S3_REGION.amazonaws.com
+repo1-s3-region=PLACEHOLDER_S3_REGION
+repo1-s3-key=PLACEHOLDER_AWS_ACCESS_KEY_ID
+repo1-s3-key-secret=PLACEHOLDER_AWS_SECRET_ACCESS_KEY
+repo1-path=/pgbackrest
+
+# Retention policy
+repo1-retention-full=2       # Keep 2 full backups
+repo1-retention-diff=4       # Keep 4 differential backups
+repo1-retention-archive=14   # Keep 14 days of WAL archives
+
+# Encryption — uncomment to enable AES-256 backup encryption.
+# Store the passphrase securely offline — loss means backups are unrecoverable.
+# repo1-cipher-type=aes-256-cbc
+# repo1-cipher-pass=PLACEHOLDER_CIPHER_PASSPHRASE
+
+# ── Repo 2: MinIO (Cold / off-site backup) ────────────────────────────────────
+# Remove this block entirely if you are not using MinIO.
+repo2-type=s3
+repo2-s3-bucket=PLACEHOLDER_MINIO_BUCKET
+repo2-s3-endpoint=PLACEHOLDER_MINIO_ENDPOINT    # e.g. minio.internal:9000
+repo2-s3-region=us-east-1                       # MinIO ignores this value; any string works
+repo2-s3-key=PLACEHOLDER_MINIO_ACCESS_KEY
+repo2-s3-key-secret=PLACEHOLDER_MINIO_SECRET_KEY
+repo2-path=/pgbackrest
+repo2-retention-full=1
+repo2-s3-uri-style=path                         # Required for MinIO — uses path-style URLs
+# repo2-cipher-type=aes-256-cbc
+# repo2-cipher-pass=PLACEHOLDER_MINIO_CIPHER_PASSPHRASE
+
+# ── WAL Archiving ─────────────────────────────────────────────────────────────
+# archive-async=y: WAL segments are spooled locally before being pushed to S3
+# asynchronously. This prevents S3 latency spikes from blocking PostgreSQL
+# commits. The spool-path directory acts as a local buffer.
+archive-async=y
+spool-path=/var/spool/pgbackrest
+archive-timeout=60
+archive-push-queue-max=1024MB
+
+# ── Backup Behaviour ──────────────────────────────────────────────────────────
+# start-fast=y: skips waiting for the next checkpoint — backup starts immediately.
+# backup-standby=y: file copy phase runs from a replica, keeping backup I/O
+#   off the primary write path. Coordination (pg_backup_start/stop) still goes
+#   via pg1-host (the NLB write endpoint → current primary).
+start-fast=y
+backup-standby=y
+
+# ── Performance and Compression ───────────────────────────────────────────────
+# zst (Zstandard) gives better compression ratio and speed than gzip.
+# process-max=4: tune down to 2 if CPU is constrained during backup windows.
+process-max=4
+compress-type=zst
+compress-level=3
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+log-level-console=info
+log-level-file=info
+log-level-stderr=error
+log-path=/var/log/pgbackrest
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stanza: defines the PostgreSQL cluster to back up
+#
+# pg1-host points to the NLB write endpoint (port 5000), which always resolves
+# to the current Patroni leader. Using the NLB here means backups survive
+# failovers without any config changes — no need to hardcode a primary IP.
+#
+# pg2 and pg3 are the replica nodes. With backup-standby=y, PgBackRest copies
+# data files from pg2 first. If pg2 is unreachable it tries pg3. If both
+# replicas are down it falls back to the primary via pg1.
+# ─────────────────────────────────────────────────────────────────────────────
+[PLACEHOLDER_STANZA_NAME]
+
+pg1-path=/data/patroni
+pg1-host=PLACEHOLDER_NLB_DNS_NAME    # NLB DNS name → HAProxy → current primary
+pg1-host-user=postgres
+pg1-port=5000                        # NLB write port
+
+pg2-path=/data/patroni
+pg2-host=PLACEHOLDER_PG_NODE_2_IP
+pg2-host-user=postgres
+pg2-port=5432
+
+pg3-path=/data/patroni
+pg3-host=PLACEHOLDER_PG_NODE_3_IP
+pg3-host-user=postgres
+pg3-port=5432

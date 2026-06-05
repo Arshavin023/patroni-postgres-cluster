@@ -1,0 +1,58 @@
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# Patroni Configuration — pg-node-2 / pg-node-3 (Replica Nodes)
+#
+# Differences from patroni.yml.example (pg-node-1):
+#   - name is pg-node-2 or pg-node-3
+#   - restapi and postgresql listen/connect_address use this node's IP
+#   - bootstrap block is omitted (only pg-node-1 bootstraps the cluster)
+#
+# Replace every PLACEHOLDER_ value before deploying.
+# For pg-node-3, substitute every occurrence of pg-node-2 and PG_NODE_2_IP
+# with pg-node-3 and PG_NODE_3_IP.
+#
+# File permissions must be: owner=postgres, mode=600
+#   sudo chown postgres:postgres /etc/patroni/patroni.yml
+#   sudo chmod 600 /etc/patroni/patroni.yml
+# ─────────────────────────────────────────────────────────────────────────────
+
+scope: PLACEHOLDER_CLUSTER_NAME        # Must match pg-node-1 exactly
+namespace: /patroni/
+name: pg-node-2                        # Change to pg-node-3 on the third node
+
+restapi:
+  listen: PLACEHOLDER_PG_NODE_2_IP:8008
+  connect_address: PLACEHOLDER_PG_NODE_2_IP:8008
+
+etcd3:
+  hosts:
+    - PLACEHOLDER_ETCD_NODE_1_IP:2379
+    - PLACEHOLDER_ETCD_NODE_2_IP:2379
+    - PLACEHOLDER_ETCD_NODE_3_IP:2379
+
+postgresql:
+  listen: PLACEHOLDER_PG_NODE_2_IP:5432
+  connect_address: PLACEHOLDER_PG_NODE_2_IP:5432
+  data_dir: /data/patroni
+  bin_dir: /usr/lib/postgresql/17/bin
+  pgpass: /tmp/pgpass0
+
+  authentication:
+    replication:
+      username: replicator
+      password: 'PLACEHOLDER_REPLICATOR_PASSWORD'    # Must match pg-node-1
+    superuser:
+      username: postgres
+      password: 'PLACEHOLDER_POSTGRES_PASSWORD'      # Must match pg-node-1
+    rewind:
+      username: rewind_user
+      password: 'PLACEHOLDER_REWIND_PASSWORD'        # Must match pg-node-1
+
+  parameters:
+    unix_socket_directories: '/var/run/postgresql'
+
+tags:
+  nofailover: false
+  noloadbalance: false
+  clonefrom: false
+  nosync: false

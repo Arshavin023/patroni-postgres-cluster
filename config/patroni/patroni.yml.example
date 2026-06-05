@@ -1,0 +1,130 @@
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# Patroni Configuration — pg-node-1 (Primary Bootstrap Node)
+#
+# This file is the template for pg-node-1. For pg-node-2 and pg-node-3,
+# use patroni-replica.yml.example — the only differences are:
+#   - name:
+#   - restapi.listen / restapi.connect_address
+#   - postgresql.listen / postgresql.connect_address
+#
+# Replace every PLACEHOLDER_ value before deploying.
+# File permissions must be: owner=postgres, mode=600
+#   sudo chown postgres:postgres /etc/patroni/patroni.yml
+#   sudo chmod 600 /etc/patroni/patroni.yml
+# ─────────────────────────────────────────────────────────────────────────────
+
+scope: PLACEHOLDER_CLUSTER_NAME        # e.g. myapp-postgres-cluster
+namespace: /patroni/
+name: pg-node-1
+
+restapi:
+  listen: PLACEHOLDER_PG_NODE_1_IP:8008
+  connect_address: PLACEHOLDER_PG_NODE_1_IP:8008
+
+etcd3:
+  hosts:
+    - PLACEHOLDER_ETCD_NODE_1_IP:2379
+    - PLACEHOLDER_ETCD_NODE_2_IP:2379
+    - PLACEHOLDER_ETCD_NODE_3_IP:2379
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Bootstrap block — only used when the cluster is first created.
+# Safe to include on all nodes; only pg-node-1 actually uses it.
+# ─────────────────────────────────────────────────────────────────────────────
+bootstrap:
+  dcs:
+    ttl: 30
+    loop_wait: 10
+    retry_timeout: 10
+    maximum_lag_on_failover: 1048576   # 1 MB — replica must be within 1 MB of primary to be eligible for promotion
+    master_start_timeout: 300
+    synchronous_mode: false            # Set to true for zero-RPO (impacts write latency)
+    postgresql:
+      use_pg_rewind: true              # Allows a demoted primary to re-join as replica without full re-clone
+      use_slots: true
+      parameters:
+        # ── Connections ───────────────────────────────────────────────────────
+        max_connections: 300
+
+        # ── Memory — tune to your EC2 instance size ───────────────────────────
+        # Rule of thumb: shared_buffers = 25% RAM, effective_cache_size = 75% RAM
+        shared_buffers: 8GB            # Adjust for your instance (e.g. 4GB for 16GB RAM)
+        effective_cache_size: 24GB     # Planner hint only — not allocated
+        work_mem: 32MB                 # Per sort/hash — multiply by max_connections for worst-case
+        maintenance_work_mem: 2GB
+
+        # ── Autovacuum ────────────────────────────────────────────────────────
+        autovacuum_max_workers: 4
+        autovacuum_vacuum_scale_factor: 0.05
+        autovacuum_analyze_scale_factor: 0.02
+
+        # ── WAL and Replication ───────────────────────────────────────────────
+        wal_level: replica             # Required for streaming replication
+        hot_standby: true
+        max_wal_senders: 10
+        max_replication_slots: 10
+        min_wal_size: 2GB
+        max_wal_size: 16GB
+        wal_keep_size: 1GB
+
+        # ── Checkpoints ───────────────────────────────────────────────────────
+        checkpoint_completion_target: 0.9
+        checkpoint_timeout: 15min
+
+        # ── WAL Archiving (PgBackRest) ────────────────────────────────────────
+        archive_mode: true
+        archive_command: >-
+          pgbackrest --stanza=PLACEHOLDER_STANZA_NAME --no-loop archive-push %p
+        archive_timeout: 60
+
+        # ── Logging ───────────────────────────────────────────────────────────
+        log_destination: stderr
+        logging_collector: true
+        log_directory: /var/log/postgresql
+        log_filename: postgresql-%Y-%m-%d_%H%M%S.log
+
+  initdb:
+    - encoding: UTF8
+    - data-checksums              # Detects silent data corruption — always enable
+
+  pg_hba:
+    - host replication replicator 10.0.1.0/24 md5    # Tighten to your PG subnet
+    - host all all 0.0.0.0/0 md5                      # Tighten to your app subnet in production
+
+  users:
+    admin:
+      password: 'PLACEHOLDER_ADMIN_PASSWORD'
+      options:
+        - createrole
+        - createdb
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PostgreSQL instance configuration for this node
+# ─────────────────────────────────────────────────────────────────────────────
+postgresql:
+  listen: PLACEHOLDER_PG_NODE_1_IP:5432
+  connect_address: PLACEHOLDER_PG_NODE_1_IP:5432
+  data_dir: /data/patroni
+  bin_dir: /usr/lib/postgresql/17/bin
+  pgpass: /tmp/pgpass0
+
+  authentication:
+    replication:
+      username: replicator
+      password: 'PLACEHOLDER_REPLICATOR_PASSWORD'
+    superuser:
+      username: postgres
+      password: 'PLACEHOLDER_POSTGRES_PASSWORD'
+    rewind:
+      username: rewind_user
+      password: 'PLACEHOLDER_REWIND_PASSWORD'
+
+  parameters:
+    unix_socket_directories: '/var/run/postgresql'
+
+tags:
+  nofailover: false
+  noloadbalance: false
+  clonefrom: false
+  nosync: false

@@ -1,0 +1,42 @@
+# ── Secrets — NEVER commit these ─────────────────────────────────────────────
+*.env
+*.secret
+*.key
+*.pem
+*.crt
+*.p12
+pgpass*
+.pgpass
+
+# Real config files (commit only .example versions)
+patroni.yml
+etcd.conf.yml
+pgbackrest.conf
+haproxy.cfg
+
+# AWS credentials
+.aws/
+credentials
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# ── Editor ────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.iml
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Python (if any tooling added later) ──────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/

@@ -17,13 +17,16 @@ Client Application
   ├── Port 5000  →  WRITES  (TCP, forwards to all 3 nodes)
   └── Port 5001  →  READS   (TCP, forwards to all 3 nodes)
         │
-        │  NLB health-checks Patroni REST API on port 8008
-        │  Removes any node where Patroni is down from rotation
+        │  NLB health-checks HAProxy on port 9000 (writes) and port 9001 (reads)
+        │  HAProxy returns 200 only if the relevant backend is up on that node
+        │  Removes any node where the backend is unavailable from NLB rotation
         ▼
   HAProxy  (co-located on every PostgreSQL node)
-  ├── Port 5000  →  queries GET /primary on port 8008 → routes to leader only
-  └── Port 5001  →  queries GET /replica on port 8008 → round-robins across replicas
-                    falls back to primary if no replicas are available
+  ├── Port 5000  →  queries GET /primary on Patroni REST (port 8008) → routes to leader only
+  ├── Port 5001  →  queries GET /replica on Patroni REST (port 8008) → round-robins across replicas
+  │                 falls back to primary if no replicas are available
+  ├── Port 9000  →  NLB health endpoint: 200 if primary backend is up on this node, else 503
+  └── Port 9001  →  NLB health endpoint: 200 if read backend is up on this node, else 503
         │
         ▼
   PostgreSQL 17 on port 5432
@@ -40,7 +43,7 @@ Client Application
 
 - **Dedicated ETCD nodes** — keeps consensus traffic completely separate from database I/O
 - **HAProxy co-located on each PG node** — no single point of failure in the routing layer; the NLB distributes to all three, and only the one with the current primary actually accepts writes
-- **NLB health check on port 8008** — verifies Patroni is alive, not just that a port is open; prevents routing to a node where Patroni has crashed but HAProxy is still up
+- **NLB health checks on ports 9000/9001** — the NLB hits HAProxy's dedicated health endpoints, not Patroni directly; HAProxy returns 200 only if the relevant backend (primary or replica) is actually up on that node, giving the NLB role-aware visibility rather than a simple port-open check
 - **PgBackRest with `backup-standby=y`** — backup I/O hits a replica, keeping the write path clean
 - **Dual backup repos** — S3 (warm) + MinIO (cold/off-site) for defence-in-depth
 

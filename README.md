@@ -1,7 +1,7 @@
 # Patroni PostgreSQL HA Cluster on AWS
 
-![System Architecture](images/patroni-postgres-cluster.png)
-
+![Entire System Architecture](images/distributed_app_deployment.png)
+![Patroni-ECTD-Posgres-HAProxy-PgBackRest](images/patroni-postgres-cluster.png)
 A production-proven, battle-tested setup for a highly available PostgreSQL 17 cluster using **Patroni**, **ETCD**, **HAProxy**, and **PgBackRest** — deployed on AWS EC2 with an NLB for transparent client routing.
 
 > This setup has been successfully implemented in a production AWS environment.  

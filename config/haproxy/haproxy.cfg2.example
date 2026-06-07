@@ -1,0 +1,79 @@
+global
+    maxconn 500
+    log /dev/log local0
+
+defaults
+    log global
+    mode tcp
+    retries 2
+    timeout client  30m
+    timeout connect 4s
+    timeout server  30m
+    timeout check   5s
+
+# ───────── WRITES → True Primary Only (Port 5000) ─────────
+frontend pg_writes
+    bind *:5000
+    mode tcp
+    option tcplog
+    default_backend primary_node
+
+backend primary_node
+    mode tcp
+    option httpchk GET /primary
+    http-check expect status 200
+    default-server inter 3s fall 3 rise 2 on-marked-down shutdown-sessions
+    server pg-node-1 172.31.10.62:5432 maxconn 300 check port 8008
+    server pg-node-2 172.31.37.150:5432 maxconn 300 check port 8008
+
+# ───────── READS → Replica preferred, Primary fallback (Port 5001) ─────────
+frontend pg_reads
+    bind *:5001
+    mode tcp
+    option tcplog
+    acl has_replica nbsrv(replica_nodes) gt 0
+    use_backend replica_nodes if has_replica
+    default_backend primary_reads_fallback
+
+backend replica_nodes
+    mode tcp
+    balance roundrobin
+    option httpchk GET /replica
+    http-check expect status 200
+    default-server inter 3s fall 3 rise 2 on-marked-down shutdown-sessions
+    server pg-node-1 172.31.10.62:5432 maxconn 300 check port 8008
+    server pg-node-2 172.31.37.150:5432 maxconn 300 check port 8008
+
+backend primary_reads_fallback
+    mode tcp
+    option httpchk GET /primary
+    http-check expect status 200
+    default-server inter 3s fall 3 rise 2 on-marked-down shutdown-sessions
+    server pg-node-1 172.31.10.62:5432 maxconn 300 check port 8008
+    server pg-node-2 172.31.37.150:5432 maxconn 300 check port 8008
+
+# ───────── HAProxy Stats Dashboard ─────────
+listen stats
+    mode http
+    bind *:7000
+    stats enable
+    stats uri /haproxy
+    stats refresh 5s
+
+# ───────── NLB Health Check: Writes (Port 9000) ─────────
+frontend nlb_writes_healthcheck
+    bind *:9000
+    mode http
+    monitor-uri /health
+    monitor fail unless { srv_is_up(primary_node/pg-node-2) }
+
+# ───────── NLB Health Check: Reads (Port 9001) ─────────
+frontend nlb_reads_healthcheck
+    bind *:9001
+    mode http
+    monitor-uri /health
+    acl is_replica  srv_is_up(replica_nodes/pg-node-2)
+    acl is_primary  srv_is_up(primary_node/pg-node-2)
+    acl no_replicas nbsrv(replica_nodes) eq 0
+    monitor fail if !is_replica !is_primary
+    monitor fail if !is_replica is_primary !no_replicas

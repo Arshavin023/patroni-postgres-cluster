@@ -26,16 +26,18 @@
 
 ## Phase 1 — Base Preparation: PostgreSQL Nodes (`pg-node-1`, `pg-node-2`, `pg-node-3`)
 
-Run on **all three PostgreSQL nodes** unless otherwise noted.
-
 ```bash
-# Update system
-sudo apt update && sudo apt upgrade -y
-
 # Set hostname — run the matching line on each node
 sudo hostnamectl set-hostname pg-node-1   # on pg-node-1
 sudo hostnamectl set-hostname pg-node-2   # on pg-node-2
 sudo hostnamectl set-hostname pg-node-3   # on pg-node-3
+```
+
+### 1.1 Run on **all three PostgreSQL nodes** unless otherwise noted.
+
+```bash
+# Update system
+sudo apt update && sudo apt upgrade -y
 
 # Add all 6 nodes to /etc/hosts on every PostgreSQL node
 sudo tee -a /etc/hosts <<EOF
@@ -73,7 +75,7 @@ sudo systemctl disable postgresql
 id postgres
 ```
 
-### Install Patroni in an Isolated Virtual Environment
+### 1.2 Install Patroni in an Isolated Virtual Environment in all three nodes
 
 ```bash
 sudo apt install -y python3-venv python3-full
@@ -94,16 +96,11 @@ patroni --version
 patronictl --help
 ```
 
-### Install HAProxy
+### 1.3 Install HAProxy in all three nodes
 
 ```bash
 sudo apt install -y haproxy
 haproxy -v
-```
-
-### Create Required Directories
-
-```bash
 sudo mkdir -p /etc/patroni /var/log/patroni /data/patroni
 sudo chown postgres:postgres /data/patroni /var/log/patroni
 sudo chmod 700 /data/patroni
@@ -115,17 +112,19 @@ pg_ctl --version
 
 ---
 
+
 ## Phase 2 — ETCD Setup: Dedicated ETCD Nodes (`etcd-1`, `etcd-2`, `etcd-3`)
-
-### 2a — Base Preparation (all 3 ETCD nodes)
-
 ```bash
-sudo apt update && sudo apt upgrade -y
-
 # Set hostname — run the matching line on each node
 sudo hostnamectl set-hostname etcd-1   # on etcd-1
 sudo hostnamectl set-hostname etcd-2   # on etcd-2
 sudo hostnamectl set-hostname etcd-3   # on etcd-3
+```
+
+### 2.1 — Base Preparation (all 3 ETCD nodes)
+
+```bash
+sudo apt update && sudo apt upgrade -y
 
 # Add all 6 nodes to /etc/hosts
 sudo tee -a /etc/hosts <<EOF
@@ -136,12 +135,10 @@ ETCD_NODE_1_IP  etcd-1
 ETCD_NODE_2_IP  etcd-2
 ETCD_NODE_3_IP  etcd-3
 EOF
-
 sudo apt install -y curl wget jq net-tools
 
 # Create etcd OS user
 sudo useradd -r -s /sbin/nologin etcd 2>/dev/null || true
-
 # Create data and config directories
 sudo mkdir -p /var/lib/etcd /etc/etcd
 sudo chown -R etcd:etcd /var/lib/etcd
@@ -167,7 +164,7 @@ EOF
 sudo sysctl -p
 ```
 
-### 2b — (Optional) Dedicated SSD Volume for ETCD Data
+### 2.2 — (Optional) Dedicated SSD Volume for ETCD Data
 
 ETCD is extremely sensitive to disk latency. On AWS, attach a separate **gp3 SSD** to each ETCD node and mount it at `/var/lib/etcd`.
 
@@ -185,7 +182,7 @@ echo "/dev/nvme1n1  /var/lib/etcd  ext4  defaults,noatime  0 2" \
     | sudo tee -a /etc/fstab
 ```
 
-### 2c — ETCD Configuration
+### 2.3 — ETCD Configuration
 
 Each node gets its own config. Replace `ETCD_NODE_N_IP` with the actual IP for that node.
 
@@ -202,7 +199,7 @@ sudo chown etcd:etcd /etc/etcd/etcd.conf.yml
 sudo chmod 640 /etc/etcd/etcd.conf.yml
 ```
 
-### 2d — ETCD systemd Service (all 3 ETCD nodes)
+### 2.4 — ETCD systemd Service (all 3 ETCD nodes)
 
 ```bash
 sudo tee /etc/etcd/etcd.env <<'EOF'
@@ -242,7 +239,7 @@ sudo systemctl start etcd
 sudo systemctl status etcd
 ```
 
-### 2e — Verify ETCD Cluster Health
+### 2.5 — Verify ETCD Cluster Health
 
 Run from any ETCD node. Expected: 3 members, 1 leader, 2 followers, all healthy.
 
@@ -258,6 +255,7 @@ etcdctl --endpoints=$ETCD_ENDPOINTS member list --write-out=table
 
 ## Phase 3 — Configure Patroni (PostgreSQL Nodes)
 
+### 3.1 — Patroni Configuration
 Each PostgreSQL node needs its own `/etc/patroni/patroni.yml`. The only differences between nodes are:
 - `name`: `pg-node-1` / `pg-node-2` / `pg-node-3`
 - `restapi.listen` / `restapi.connect_address`: this node's IP
@@ -276,7 +274,7 @@ sudo chown postgres:postgres /etc/patroni/patroni.yml
 sudo chmod 600 /etc/patroni/patroni.yml
 ```
 
-### Patroni systemd Service (all 3 PostgreSQL nodes)
+### 3.2 Patroni systemd Service (all 3 PostgreSQL nodes)
 
 ```bash
 sudo tee /etc/systemd/system/patroni.service <<'EOF'
@@ -304,7 +302,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable patroni
 ```
 
-### Start Patroni — Order Matters
+### 3.3 Start Patroni — Order Matters
 
 ```bash
 # 1. Confirm ETCD is healthy first
@@ -333,7 +331,7 @@ patronictl -c /etc/patroni/patroni.yml list
 ---
 
 ## Phase 4 — HAProxy Configuration (PostgreSQL Nodes)
-
+### 4.1 — HAProxy Configuration
 HAProxy is already installed from Phase 1. Each node gets a config that is identical in structure but references **itself** in the NLB health check frontends.
 
 See `config/haproxy/haproxy.cfg.example` — note the node-specific lines in the NLB health check frontends at the bottom. Update these to reference the correct node name.
@@ -348,26 +346,39 @@ sudo systemctl restart haproxy
 sudo systemctl status haproxy
 ```
 
-### Verify HAProxy is Routing Correctly
+### 4.2 Verify HAProxy is Routing Correctly
 
 ```bash
 # Check HAProxy is listening
 ss -tlnp | grep -E '5000|5001|7000'
 
-# Check Patroni health endpoints — only the leader returns 200 for /primary
-curl -s -o /dev/null -w "%{http_code}\n" http://PG_NODE_1_IP:8008/primary
-curl -s -o /dev/null -w "%{http_code}\n" http://PG_NODE_2_IP:8008/primary
-curl -s -o /dev/null -w "%{http_code}\n" http://PG_NODE_3_IP:8008/primary
+pg_isready -h 127.0.0.1 -p 5000 && pg_isready -h 127.0.0.1 -p 5001
+# Expected: 127.0.0.1:5000 - accepting connections
+# (This traffic goes through HAProxy to local Postgres on 5432)
 
-# Check HAProxy stats dashboard in a browser
-# http://PG_NODE_1_IP:7000/haproxy
+pg_isready -h 127.0.0.1 -p 5001
+# Expected: 127.0.0.1:5001 - accepting connections
+# (This traffic goes through HAProxy, across the network, to pg-node-2 on 5432)
+
+# Verify HAProxy is correctly reading Patroni health endpoints
+# Run after Patroni cluster is up — should show 200 on leader, 503 on replicas
+curl -s -o /dev/null -w "%{http_code}\n" http://172.31.10.62:8008/primary
+curl -s -o /dev/null -w "%{http_code}\n" http://172.31.37.150:8008/primary
+
+curl -s -o /dev/null -w "%{http_code}\n" http://172.31.10.62:8008/replica
+curl -s -o /dev/null -w "%{http_code}\n" http://172.31.37.150:8008/replica
+
+curl -s -o /dev/null -w "%{http_code}" http://10.0.1.12:8008/primary
+
+# Only one node should return 200 — that is your current primary
+# Access the HAProxy stats dashboard in a browser: http://172.31.10.62:7000/haproxy
 ```
 
 ---
 
 ## Phase 5 — AWS NLB Configuration
 
-### Create Target Groups
+### 5.1 Create Target Groups
 
 ```bash
 # Writes target group (port 5000)
@@ -419,7 +430,7 @@ aws elbv2 create-listener \
   --default-actions Type=forward,TargetGroupArn=<reads-tg-arn>
 ```
 
-### Application Connection Strings
+### 5.3 Application Connection Strings on Application Server
 
 ```
 # Writes — always reaches the current primary via HAProxy
@@ -429,23 +440,32 @@ postgresql://user:password@YOUR_NLB_DNS_NAME:5000/your_database
 postgresql://user:password@YOUR_NLB_DNS_NAME:5001/your_database
 ```
 
-> The NLB health check uses HTTP on port 8008 (Patroni REST) — not TCP on 5000.  
-> This is intentional: it verifies Patroni is alive, not just that HAProxy's port is open.  
-> If Patroni crashes but HAProxy stays up, the NLB correctly removes that node from rotation.
+> Why HTTP health checks on ports 9000 and 9001, not TCP on 5432 or 5000?
+> TCP on port 5432 (PostgreSQL) or 5000 (HAProxy) only tells the NLB "the port is open." It cannot distinguish whether the node is actually a primary or a replica.
+> Using HTTP on port 9000 (writes) and port 9001 (reads), HAProxy itself acts as the health check responder — returning 200 only when the node satisfies the role being checked (primary for writes, replica for reads), and 503 otherwise.
+> This means the NLB routes write traffic exclusively to whichever node Patroni has elected as primary, and read traffic to the replica — automatically, without manual intervention.
+> If Patroni promotes a replica or a failover occurs, the health check responses flip accordingly, and the NLB reroutes traffic within seconds.
 
 ---
 
 ## Phase 6 — PgBackRest (PostgreSQL Nodes)
 
-### Install
+### 6.1 Install
 
 ```bash
 # On all 3 PostgreSQL nodes
-sudo apt install -y pgbackrest
+# Install pgBackRest (apt — Ubuntu/Debian)
+sudo apt-get update
+sudo apt-get install -y pgbackrest
+ 
+# Verify version (must be 2.47+ for zst compression + backup-standby fixes)
 pgbackrest version
+ 
+# Also install required utilities used by the backup script
+sudo apt-get install -y jq netcat-openbsd
 ```
 
-### IAM and S3 Setup
+### 6.2 IAM and S3 Setup Run on your laptop with AWS-CLI configured
 
 ```bash
 # Create a dedicated IAM user for PgBackRest
@@ -469,10 +489,10 @@ aws iam put-user-policy \
     }]
   }'
 
-# Save the keys printed by this command — you will not see the secret again
+### 6.3 Save the keys printed by this command — you will not see the secret again
 aws iam create-access-key --user-name pgbackrest-s3-user
 
-# Create and harden the S3 bucket
+### 6.4 Create and harden the S3 bucket
 aws s3api create-bucket \
   --bucket YOUR_S3_BUCKET \
   --region YOUR_S3_REGION \
@@ -489,199 +509,417 @@ aws s3api put-public-access-block \
     BlockPublicPolicy=true,RestrictPublicBuckets=true
 ```
 
-### PgBackRest Configuration (all 3 PostgreSQL nodes)
+### 6.5 Create config, log, and spool directories
+```bash
+sudo mkdir -p /etc/pgbackrest \
+             /var/log/pgbackrest \
+             /var/spool/pgbackrest
+ 
+# Transfer ownership to the postgres OS user
+sudo chown -R postgres:postgres \
+    /var/log/pgbackrest \
+    /var/spool/pgbackrest
+```
+
+### 6.6 Generate SSH Keypair — postgres User on Both Nodes
+#### Switch to postgres user
+```bash
+sudo -i -u postgres
+ 
+# Create .ssh directory with correct permissions
+mkdir -p ~/.ssh
+chmod 700 ~/.ssh
+ 
+# Generate Ed25519 keypair (no passphrase — required for non-interactive use)
+ssh-keygen -t ed25519 -f ~/.ssh/pgbackrest_rsa -N "" -C "pgbackrest@$(hostname)"
+ 
+# Exit postgres shell temporarily to copy keys
+exit
+```
+
+### 6.7 Exchange Public Keys Between Nodes
+#### Each node needs the other node's public key in its authorized_keys file. The file must contain keys from BOTH nodes so that either can SSH to either.
+```bash
+# ── On pg-node-1: copy its public key to pg-node-2 ──────────────────────
+# First, view the public key on node-1
+sudo -u postgres cat /var/lib/postgresql/.ssh/pgbackrest_rsa.pub
+ 
+# On pg-node-2 — append node-1's key to authorized_keys
+sudo -u postgres bash -c 'echo "PASTE_NODE1_PUBLIC_KEY_HERE" >> ~/.ssh/authorized_keys'
+sudo -u postgres chmod 600 ~/.ssh/authorized_keys
+ 
+# ── On pg-node-2: copy its public key to pg-node-1 ──────────────────────
+# First, view the public key on node-2
+sudo -u postgres cat /var/lib/postgresql/.ssh/pgbackrest_rsa.pub
+ 
+# On pg-node-1 — append node-2's key to authorized_keys
+sudo -u postgres bash -c 'echo "PASTE_NODE2_PUBLIC_KEY_HERE" >> ~/.ssh/authorized_keys'
+sudo -u postgres chmod 600 ~/.ssh/authorized_keys
+```
+
+### 6.8 Add Self-Loop Key (Each Node to Itself)
+#### pgBackRest's backup-standby fallback path uses pg3-host=127.0.0.1 (loopback) as a last-resort standby. The postgres user must also be able to SSH to its own loopback address without a password. Run on EACH node independently:
+```bash
+# On EACH node — add its own public key to its own authorized_keys
+sudo -u postgres bash -c 'cat ~/.ssh/pgbackrest_rsa.pub >> ~/.ssh/authorized_keys'
+sudo -u postgres chmod 600 ~/.ssh/authorized_keys
+ 
+# Verify authorized_keys contains all required keys (should have 2 entries per node)
+sudo -u postgres cat ~/.ssh/authorized_keys | wc -l
+# Expected: 2  (own key + partner key)
+```
+
+### 6.9 Configure SSH Client — Known Hosts & Identity File
+#### Create or update ~/.ssh/config for the postgres user on BOTH nodes to pre-approve the host keys and specify the pgBackRest keypair:
+```bash
+# ── pg-node-1: /var/lib/postgresql/.ssh/config ───────────────────────────
+sudo -u postgres tee /var/lib/postgresql/.ssh/config <<'EOF'
+Host 172.31.37.150
+    User postgres
+    IdentityFile ~/.ssh/pgbackrest_rsa
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+    LogLevel ERROR
+    BatchMode yes
+ 
+Host 127.0.0.1
+    User postgres
+    IdentityFile ~/.ssh/pgbackrest_rsa
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+    LogLevel ERROR
+    BatchMode yes
+EOF
+sudo -u postgres chmod 600 /var/lib/postgresql/.ssh/config
+```
 
 ```bash
-sudo mkdir -p /etc/pgbackrest /var/log/pgbackrest /var/spool/pgbackrest
-sudo chown postgres:postgres /var/log/pgbackrest /var/spool/pgbackrest
+# ── pg-node-2: /var/lib/postgresql/.ssh/config ───────────────────────────
+sudo -u postgres tee /var/lib/postgresql/.ssh/config <<'EOF'
+Host 172.31.10.62
+    User postgres
+    IdentityFile ~/.ssh/pgbackrest_rsa
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+    LogLevel ERROR
+    BatchMode yes
+ 
+Host 127.0.0.1
+    User postgres
+    IdentityFile ~/.ssh/pgbackrest_rsa
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+    LogLevel ERROR
+    BatchMode yes
+EOF
+sudo -u postgres chmod 600 /var/lib/postgresql/.ssh/config
+```
 
+### 6.10 Verify All Four SSH Paths
+#### Run ALL four tests. Every test must return the hostname with zero prompts. Any failure must be resolved before proceeding.
+```bash
+# ── From pg-node-1 ───────────────────────────────────────────────────────
+sudo -u postgres ssh 172.31.37.150 hostname        # must print: pg-node-2
+sudo -u postgres ssh 127.0.0.1    hostname        # must print: pg-node-1
+ 
+# ── From pg-node-2 ───────────────────────────────────────────────────────
+sudo -u postgres ssh 172.31.10.62 hostname        # must print: pg-node-1
+sudo -u postgres ssh 127.0.0.1    hostname        # must print: pg-node-2
+ 
+# ── Quick pgBackRest-level SSH test (after config is in place) ───────────
+# On node-1, as postgres:
+sudo -u postgres pgbackrest --stanza=lamisplus --pg-host=172.31.37.150 \
+    --pg-path=/data/patroni remote --type=db info 2>&1 | head -5
+```
+
+### 6.11 Patroni bootstrap.dcs Settings (patroni.yml)
+#### Add or confirm the following under the postgresql.parameters block in /etc/patroni/patroni.yml on BOTH nodes:
+#### ℹ  NOTE: Patroni writes these parameters to PostgreSQL's DCS (etcd). After updating patroni.yml, reload Patroni (sudo systemctl reload patroni) on both nodes — do NOT restart PostgreSQL directly.
+
+```bash
+# /etc/patroni/patroni.yml — postgresql parameters section
+bootstrap:
+  dcs:
+    postgresql:
+      parameters:
+        wal_level: replica
+        archive_mode: on
+        archive_command: >-
+          pgbackrest --stanza=lamisplus archive-push %p
+        archive_timeout: 60
+        max_wal_senders: 5
+        wal_keep_size: 512
+ 
+# IMPORTANT: archive_command uses the async wrapper automatically because
+# archive-async=y is set in pgbackrest.conf. Do not add --no-archive-async.
+```
+
+### 6.12 Confirm PostgreSQL Archive Settings After Reload
+```bash
+# Check live GUC values (run as postgres or via psql)
+sudo -u postgres psql -c "SHOW archive_mode;"
+sudo -u postgres psql -c "SHOW archive_command;"
+sudo -u postgres psql -c "SHOW wal_level;"
+ 
+# Confirm archiving is actually working after stanza-create (Section 4)
+sudo -u postgres psql -c "SELECT * FROM pg_stat_archiver;"
+# last_failed_operation should be NULL, archived_count should be growing
+```
+
+### 6.13 Node-1 Configuration (/etc/pgbackrest/pgbackrest.conf)
+```bash
+# Copy and adapt on each PostgreSQL node
 sudo cp /path/to/repo/config/pgbackrest/pgbackrest.conf.example /etc/pgbackrest/pgbackrest.conf
-# Edit all PLACEHOLDER_ values — particularly the S3 keys and stanza name
+# Edit all PLACEHOLDER_ values and the node-specific IP addresses
 sudo nano /etc/pgbackrest/pgbackrest.conf
 
+# Lock down file permissions — this file contains database passwords
 sudo chown postgres:postgres /etc/pgbackrest/pgbackrest.conf
-sudo chmod 640 /etc/pgbackrest/pgbackrest.conf
+sudo chmod 600 /etc/pgbackrest/pgbackrest.conf
 ```
 
-### SSH Key Exchange Between PostgreSQL Nodes
-
-PgBackRest requires passwordless SSH between PostgreSQL nodes to copy files from replicas during `backup-standby=y`.
-
+### 6.14 Create the Stanza (Primary Node Only — One Time)
 ```bash
-# Generate key on ALL 3 PostgreSQL nodes (run as postgres)
-sudo -u postgres ssh-keygen -t rsa -b 4096 -N '' \
-    -f /var/lib/postgresql/.ssh/id_rsa
-
-# From pg-node-1: push public key to pg-node-2 and pg-node-3
-sudo -u postgres ssh-copy-id postgres@PG_NODE_2_IP
-sudo -u postgres ssh-copy-id postgres@PG_NODE_3_IP
-
-# From pg-node-2: push to pg-node-1 and pg-node-3
-sudo -u postgres ssh-copy-id postgres@PG_NODE_1_IP
-sudo -u postgres ssh-copy-id postgres@PG_NODE_3_IP
-
-# From pg-node-3: push to pg-node-1 and pg-node-2
-sudo -u postgres ssh-copy-id postgres@PG_NODE_1_IP
-sudo -u postgres ssh-copy-id postgres@PG_NODE_2_IP
-
-# Verify passwordless SSH works
-sudo -u postgres ssh postgres@PG_NODE_2_IP "echo SSH OK"
-```
-
-### Initialise Stanza and First Backup (pg-node-1 only)
-
-Run after the Patroni cluster is fully up and healthy.
-
-```bash
-sudo -u postgres pgbackrest --stanza=YOUR_STANZA_NAME stanza-create
-sudo -u postgres pgbackrest --stanza=YOUR_STANZA_NAME check
-
-# Take the first full backup
-sudo -u postgres pgbackrest --stanza=YOUR_STANZA_NAME --type=full backup
-
-# Confirm backup stored in both repos
-sudo -u postgres pgbackrest --stanza=YOUR_STANZA_NAME info
-```
-
-### Backup Cron Schedule (all 3 PostgreSQL nodes)
-
-```bash
-sudo -u postgres crontab -e
-
-# Full backup every Sunday at 01:00 — only executes on the active Patroni leader
-0 1 * * 0  patronictl -c /etc/patroni/patroni.yml list | grep -q "$(hostname).*Leader" && pgbackrest --stanza=YOUR_STANZA_NAME --type=full backup >> /var/log/pgbackrest/cron.log 2>&1
-
-# Differential Mon–Sat at 01:00
-0 1 * * 1-6  patronictl -c /etc/patroni/patroni.yml list | grep -q "$(hostname).*Leader" && pgbackrest --stanza=YOUR_STANZA_NAME --type=diff backup >> /var/log/pgbackrest/cron.log 2>&1
-
-# Incremental every 6 hours
-0 */6 * * *  patronictl -c /etc/patroni/patroni.yml list | grep -q "$(hostname).*Leader" && pgbackrest --stanza=YOUR_STANZA_NAME --type=incr backup >> /var/log/pgbackrest/cron.log 2>&1
-```
-
----
-
-## Phase 7 — Firewall Rules
-
-### PostgreSQL Nodes — UFW
-
-```bash
-sudo ufw allow from 10.0.1.0/24 to any port 5432 proto tcp   # PostgreSQL
-sudo ufw allow from 10.0.1.0/24 to any port 8008 proto tcp   # Patroni REST API
-sudo ufw allow from 10.0.1.0/24 to any port 5000 proto tcp   # HAProxy writes
-sudo ufw allow from 10.0.1.0/24 to any port 5001 proto tcp   # HAProxy reads
-sudo ufw allow from 10.0.1.0/24 to any port 7000 proto tcp   # HAProxy stats (internal only)
-sudo ufw allow from 10.0.1.0/24 to any port 22   proto tcp   # SSH
-sudo ufw --force enable
-```
-
-### ETCD Nodes — UFW
-
-```bash
-sudo ufw allow from 10.0.2.0/24 to any port 2380 proto tcp   # ETCD peer
-sudo ufw allow from 10.0.1.0/24 to any port 2379 proto tcp   # ETCD client (Patroni)
-sudo ufw allow from 10.0.2.0/24 to any port 2379 proto tcp   # ETCD client (local)
-sudo ufw allow from 10.0.1.0/24 to any port 22   proto tcp   # SSH
-sudo ufw --force enable
-```
-
----
-
-## Phase 8 — Operational Commands
-
-```bash
-# Cluster status
+# Run ONCE on whichever node is currently the Patroni leader (primary)
+# First confirm which node is leader:
 patronictl -c /etc/patroni/patroni.yml list
-patronictl -c /etc/patroni/patroni.yml topology
-
-# Graceful switchover (zero data loss — preferred for planned maintenance)
-patronictl -c /etc/patroni/patroni.yml switchover \
-    --master pg-node-1 --candidate pg-node-2 --scheduled now --force
-
-# Emergency failover (use only when primary is unreachable)
-patronictl -c /etc/patroni/patroni.yml failover \
-    YOUR_CLUSTER_NAME --master pg-node-1 --candidate pg-node-2 --force
-
-# Reinitialise a lagging or diverged replica
-patronictl -c /etc/patroni/patroni.yml reinit \
-    YOUR_CLUSTER_NAME pg-node-3
-
-# Pause and resume auto-failover (use during maintenance windows)
-patronictl -c /etc/patroni/patroni.yml pause
-patronictl -c /etc/patroni/patroni.yml resume
-
-# Restore latest backup
-sudo systemctl stop patroni
-sudo -u postgres pgbackrest --stanza=YOUR_STANZA_NAME --delta restore
-sudo systemctl start patroni
-
-# Point-in-time restore
-sudo systemctl stop patroni
-sudo -u postgres pgbackrest --stanza=YOUR_STANZA_NAME \
-    --type=time "--target=2026-01-15 03:00:00" --delta restore
-sudo systemctl start patroni
-
-# View logs
-tail -f /var/log/patroni/patroni.log
-tail -f /var/log/pgbackrest/pgbackrest.log
-journalctl -u etcd -f          # on ETCD nodes
-journalctl -u haproxy -f
+ 
+# Then on the leader node:
+sudo -u postgres pgbackrest --stanza=lamisplus stanza-create
+ 
+# Expected output (last line):
+# INFO: stanza-create command end: completed successfully
 ```
 
----
-
-## Phase 9 — Verification Checklist
-
-Run `scripts/verify-cluster.sh` for an automated check, or run these manually:
-
+### 6.15 Check Stanza — Both Nodes
 ```bash
-# 1. ETCD cluster: 3 members, 1 leader, 2 followers
-etcdctl --endpoints=http://ETCD_NODE_1_IP:2379,http://ETCD_NODE_2_IP:2379,http://ETCD_NODE_3_IP:2379 \
-    endpoint status --write-out=table
-
-# 2. Patroni: 1 Leader + 2 Replicas, Lag = 0
-patronictl -c /etc/patroni/patroni.yml list
-
-# 3. Writes go to primary (pg_is_in_recovery = f)
-psql -h YOUR_NLB_DNS_NAME -p 5000 -U postgres -c "SELECT pg_is_in_recovery();"
-
-# 4. Reads go to replica (pg_is_in_recovery = t)
-psql -h YOUR_NLB_DNS_NAME -p 5001 -U postgres -c "SELECT pg_is_in_recovery();"
-
-# 5. Replication lag near zero
-psql -h PG_NODE_1_IP -p 5432 -U postgres -c \
-    "SELECT client_addr, state, (sent_lsn - replay_lsn) AS lag_bytes
-     FROM pg_stat_replication;"
-
-# 6. PgBackRest healthy on both repos
-sudo -u postgres pgbackrest --stanza=YOUR_STANZA_NAME check
-sudo -u postgres pgbackrest --stanza=YOUR_STANZA_NAME info
-
-# 7. Failover test — writes follow the new leader automatically
-patronictl -c /etc/patroni/patroni.yml switchover \
-    --master pg-node-1 --candidate pg-node-2 --scheduled now --force
-sleep 15
-psql -h YOUR_NLB_DNS_NAME -p 5000 -U postgres -c "SELECT pg_is_in_recovery();"
-# Must still return: f
+# Run on BOTH nodes
+sudo -u postgres pgbackrest --stanza=lamisplus check
+ 
+# Expected: INFO: check command end: completed successfully
+# The check command verifies:
+#   1. S3 connectivity and credentials
+#   2. archive_command is correctly configured
+#   3. A test WAL segment is pushed and confirmed in S3
+ 
+# Also run info to confirm the stanza is registered
+sudo -u postgres pgbackrest --stanza=lamisplus info
 ```
 
----
-
-## Appendix — Pre-Launch Secrets Checklist
-
-Search for any remaining placeholders before going live:
-
+### 6.16 Take the First Full Backup
 ```bash
-grep -r "PLACEHOLDER\|CHANGE_ME\|YOUR_" /etc/patroni/ /etc/pgbackrest/ /etc/etcd/
+# Run from primary node — this seeds the S3 repository
+# backup-standby=y means data files are read from the replica (node-2)
+# but backup control commands still run on the primary
+sudo -u postgres pgbackrest --stanza=lamisplus --type=full backup
+ 
+# Monitor progress in real time
+tail -f /var/log/pgbackrest/lamisplus-backup.log
+ 
+# Confirm backup appears in repository
+sudo -u postgres pgbackrest --stanza=lamisplus info
 ```
 
-| Item | Location | Notes |
-|------|----------|-------|
-| `replicator` password | patroni.yml | Used for streaming replication |
-| `postgres` superuser password | patroni.yml | Guard carefully |
-| `rewind_user` password | patroni.yml | Used by pg_rewind after failover |
-| `admin` user password | patroni.yml bootstrap | Application admin user |
-| S3 access key + secret | pgbackrest.conf | Use IAM role on EC2 if possible |
-| S3 cipher passphrase | pgbackrest.conf | Keep an offline copy — loss = unrecoverable backups |
-| MinIO access key + secret | pgbackrest.conf | If using MinIO repo |
-| MinIO cipher passphrase | pgbackrest.conf | Keep an offline copy |
-| ETCD cluster token | etcd.conf.yml | Should be unique per cluster |
+### 6.17 Automated Backup Script
+```bash
+sudo tee /usr/local/bin/run-pgbackrest-backup.sh <<'EOF'
+#!/bin/bash
+set -euo pipefail
+ 
+STANZA="lamisplus"
+PATRONI_CFG="/etc/patroni/patroni.yml"
+HOSTNAME=$(hostname)
+ 
+# ── 1. Get Patroni cluster status ────────────────────────────────────────
+CLUSTER_STATUS=$(patronictl -c "$PATRONI_CFG" list --format json 2>/dev/null)
+if [[ -z "$CLUSTER_STATUS" ]]; then
+    echo "ERROR: Patroni unreachable or etcd down. Aborting."
+    exit 1
+fi
+ 
+# ── 2. Identify partner node IP ──────────────────────────────────────────
+if [[ "$HOSTNAME" == "pg-node-1" ]]; then
+    OTHER_NODE="172.31.37.150"
+else
+    OTHER_NODE="172.31.10.62"
+fi
+ 
+# ── 3. Determine local role ───────────────────────────────────────────────
+IS_LEADER=$(echo "$CLUSTER_STATUS" | jq -r \
+    --arg h "$HOSTNAME" \
+    '.[] | select(.Member == $h) | .Role' \
+    | grep -ci "^leader$" || true)
+ 
+# ── 4. Check partner reachability ────────────────────────────────────────
+PARTNER_ALIVE=0
+nc -z -w3 "$OTHER_NODE" 5432 && PARTNER_ALIVE=1 || true
+ 
+# ── 5. Determine backup type by schedule ─────────────────────────────────
+DOW=$(date +%u)   # 1=Mon … 7=Sun
+DOM=$(date +%d)   # day of month 01–31
+ 
+if [[ "$DOM" -eq 1 ]]; then
+    BACKUP_TYPE="full"
+elif [[ "$DOW" -eq 7 ]]; then
+    BACKUP_TYPE="diff"
+else
+    BACKUP_TYPE="incr"
+fi
+# ── 6. Decision matrix ───────────────────────────────────────────────────
+if [[ "$IS_LEADER" -eq 1 ]]; then
+    if [[ "$PARTNER_ALIVE" -eq 1 ]]; then
+        echo "INFO: Leader=$HOSTNAME, replica alive. Running $BACKUP_TYPE (standby offload)."
+        sudo -u postgres pgbackrest --stanza="$STANZA" --type="$BACKUP_TYPE" backup
+    else
+        echo "WARN: Leader=$HOSTNAME, replica OFFLINE. Running local $BACKUP_TYPE."
+        sudo -u postgres pgbackrest --stanza="$STANZA" --type="$BACKUP_TYPE" --no-backup-standby backup
+    fi
+else
+    if [[ "$PARTNER_ALIVE" -eq 1 ]]; then
+        echo "INFO: Replica=$HOSTNAME, leader alive. Deferring to leader."
+        exit 0
+    else
+        echo "WARN: Replica=$HOSTNAME, leader ($OTHER_NODE) unreachable. Waiting 60s..."
+        sleep 60
+ 
+        PARTNER_ALIVE_RECHECK=0
+        nc -z -w3 "$OTHER_NODE" 5432 && PARTNER_ALIVE_RECHECK=1 || true
+ 
+        if [[ "$PARTNER_ALIVE_RECHECK" -eq 1 ]]; then
+            echo "INFO: Leader came back online. Aborting emergency backup."
+            exit 0
+        fi
+ 
+        RECHECK_STATUS=$(patronictl -c "$PATRONI_CFG" list --format json 2>/dev/null)
+        IS_NOW_LEADER=0
+        if [[ -n "$RECHECK_STATUS" ]]; then
+            IS_NOW_LEADER=$(echo "$RECHECK_STATUS" | jq -r \
+                --arg h "$HOSTNAME" \
+                '.[] | select(.Member == $h) | .Role' \
+                | grep -ci "^leader$" || true)
+        fi
+ 
+        if [[ "$IS_NOW_LEADER" -eq 1 ]]; then
+            echo "INFO: Promoted to leader during failover. Running $BACKUP_TYPE (no standby)."
+            sudo -u postgres pgbackrest --stanza="$STANZA" --type="$BACKUP_TYPE" --no-backup-standby backup
+        else
+            echo "WARN: Still replica, leader still gone. Running emergency $BACKUP_TYPE."
+            sudo -u postgres pgbackrest --stanza="$STANZA" --type="$BACKUP_TYPE" --no-backup-standby backup
+        fi
+    fi
+fi
+EOF
+ 
+sudo chmod +x /usr/local/bin/run-pgbackrest-backup.sh
+sudo chown root:root /usr/local/bin/run-pgbackrest-backup.sh
+```
+
+### 6.18 Cron Configuration
+#### The node-1 and node-2 crons are staggered by 10 minutes. When both are healthy, only the leader's cron will produce a backup — the replica's script exits early at the "Deferring to leader" check.
+```bash
+# ── pg-node-1 ─────────────────────────────────────────────────────────────
+echo "0 1 * * * root bash /usr/local/bin/run-pgbackrest-backup.sh >> /var/log/pgbackrest/backup-cron.log 2>&1" \
+    | sudo tee /etc/cron.d/pgbackrest-backup
+ 
+# ── pg-node-2 ─────────────────────────────────────────────────────────────
+echo "10 1 * * * root bash /usr/local/bin/run-pgbackrest-backup.sh >> /var/log/pgbackrest/backup-cron.log 2>&1" \
+    | sudo tee /etc/cron.d/pgbackrest-backup
+ 
+# ── Both nodes: create cron log file ─────────────────────────────────────
+sudo touch /var/log/pgbackrest/backup-cron.log
+sudo chown postgres:postgres /var/log/pgbackrest/backup-cron.log
+ 
+# Verify cron file
+cat /etc/cron.d/pgbackrest-backup
+```
+
+
+## 7 Restore Procedures
+### 7.1 Full Restore to Latest Backup
+#### ⚠  WARNING: Always stop Patroni on the target node before restoring. Restoring while Patroni is active will result in conflicts and data loss.
+```bash
+# ── Step 1: Stop Patroni and PostgreSQL on target node ───────────────────
+sudo systemctl stop patroni
+ 
+# ── Step 2: Clear the existing data directory ────────────────────────────
+sudo -u postgres rm -rf /data/patroni/*
+ 
+# ── Step 3: Run pgBackRest restore ──────────────────────────────────────
+sudo -u postgres pgbackrest --stanza=lamisplus \
+    --delta restore
+ 
+# ── Step 4: Start Patroni ─────────────────────────────────────────────────
+sudo systemctl start patroni
+ 
+# ── Step 5: Confirm recovery completed ───────────────────────────────────
+sudo -u postgres psql -c "SELECT pg_is_in_recovery();"
+# Should return f (false) when node is promoted back to primary
+```
+
+### 7.2 Point-in-Time Recovery (PITR)
+```bash
+# Restore to a specific timestamp
+sudo -u postgres pgbackrest --stanza=lamisplus \
+    --delta \
+    --type=time \
+    "--target=2025-06-01 14:30:00" \
+    --target-action=promote \
+    restore
+ 
+# Restore to a specific LSN
+sudo -u postgres pgbackrest --stanza=lamisplus \
+    --delta \
+    --type=lsn \
+    --target=0/10000000 \
+    --target-action=promote \
+    restore
+ 
+# List available backups to choose a restore point
+sudo -u postgres pgbackrest --stanza=lamisplus info
+```
+
+## 8 Ongoing Monitoring & Verification
+### 8.1 Daily Health Checks
+```bash
+# Check stanza status and last backup timestamp
+sudo -u postgres pgbackrest --stanza=lamisplus info
+ 
+# Check WAL archiving is not stalled
+sudo -u postgres psql -c "SELECT \
+    archived_count,
+    last_archived_wal,
+    last_archived_time,
+    failed_count,
+    last_failed_wal,
+    last_failed_time
+FROM pg_stat_archiver;"
+ 
+# Tail backup cron log
+tail -50 /var/log/pgbackrest/backup-cron.log
+ 
+# Tail pgBackRest main log
+ls -lt /var/log/pgbackrest/ | head -5
+tail -100 /var/log/pgbackrest/lamisplus-backup.log
+```
+
+### 8.2 Validate a Backup Without Restoring
+```bash
+# pgBackRest can verify checksums of all files in S3 against the manifest
+# This catches S3 corruption without performing a full restore
+sudo -u postgres pgbackrest --stanza=lamisplus verify
+ 
+# To verify a specific backup set only (use label from pgbackrest info)
+sudo -u postgres pgbackrest --stanza=lamisplus \
+    --set=20250601-010000F verify
+```
+
+### 8.3 S3 Bucket Checks
+```bash
+# List S3 repository contents (requires AWS CLI configured on the node)
+aws s3 ls s3://lamisplus-pg-backups/pgbackrest/ --recursive --human-readable \
+    | grep -E "(backup|archive)" | head -20
+ 
+# Total size of the repository
+aws s3 ls s3://lamisplus-pg-backups/pgbackrest/ --recursive \
+    | awk '{ sum += $3 } END { printf "Total: %.2f GB\n", sum/1073741824 }'
+```

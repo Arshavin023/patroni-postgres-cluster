@@ -38,11 +38,12 @@ log-path=/var/log/pgbackrest
 # ── Stanza: lamisplus ────────────────────────────────────────────────────
 [lamisplus]
  
-# pg1 = this node (node-1). Local socket — no pg1-host.
+# pg1 = this node (node-2). Local socket — no pg1-host.
 pg1-path=/data/patroni
 pg1-port=5432
-# pg2 = node-2 (preferred standby for file copy via SSH)
+ 
+# pg2 = node-1 (preferred standby for file copy via SSH)
 pg2-path=/data/patroni
-pg2-host=172.31.37.150
+pg2-host=172.31.10.62
 pg2-host-user=postgres
 pg2-port=5432
